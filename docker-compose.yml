@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: seatlock
+      POSTGRES_PASSWORD: seatlock
+      POSTGRES_DB: seatlock
+    ports:
+      - "5432:5432"
+    volumes:
+      - seatlock-data:/var/lib/postgresql/data
+      - ./apps/api/sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seatlock"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  seatlock-data:
+

@@ -1,0 +1,20 @@
+{
+  "name": "seatlock",
+  "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "packageManager": "npm@11.17.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,worker,web -c blue,magenta,green \"npm run dev -w @seatlock/api\" \"npm run worker -w @seatlock/api\" \"npm run dev -w @seatlock/web\"",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

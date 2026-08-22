@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build -w @seatlock/web",
+  "outputDirectory": "apps/web/dist",
+  "framework": "vite"
+}

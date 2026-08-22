@@ -1,0 +1,14 @@
+node_modules/
+.npm-cache/
+.pnpm-store/
+dist/
+.env
+.env.*
+!.env.example
+.vercel/
+.render/
+*.log
+*.tsbuildinfo
+work/
+.DS_Store
+coverage/
