@@ -67,7 +67,10 @@ Migration runs are serialized with a PostgreSQL advisory lock and applied
 filenames are recorded in `schema_migrations`. On Render, the API start command
 runs migrations before accepting traffic, which also works on the free web
 service plan. The included `render.yaml` and `vercel.json` provide the API,
-worker, and frontend build configuration.
+and frontend build configuration. The worker remains available through
+`npm run worker:start -w @seatlock/api`; deploy it as a Render background worker
+when continuous proactive cleanup is required, because Render does not offer a
+free background-worker instance type.
 
 ## Correctness guarantees
 

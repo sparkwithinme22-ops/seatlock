@@ -15,19 +15,3 @@ services:
         generateValue: true
       - key: ALLOWED_ORIGINS
         sync: false
-
-  - type: worker
-    name: seatlock-expiration-worker
-    runtime: node
-    plan: starter
-    buildCommand: npm ci --include=dev && npm run build -w @seatlock/api
-    startCommand: npm run worker:start -w @seatlock/api
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
-        sync: false
-      - key: JWT_SECRET
-        generateValue: true
-      - key: ALLOWED_ORIGINS
-        sync: false
