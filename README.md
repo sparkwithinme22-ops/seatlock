@@ -8,6 +8,15 @@ It includes a customer booking flow, an authenticated organizer portal, a
 separate expiration worker, PostgreSQL-enforced isolation, and production
 deployment configuration.
 
+## Live deployment
+
+- **Frontend:** https://seatlock-chi.vercel.app
+- **API health:** https://seatlock-api-g9l0.onrender.com/health
+- **Source:** https://github.com/sparkwithinme22-ops/seatlock
+
+The API uses Render's free web-service plan, so the first request after a period
+of inactivity can take longer while the service wakes up.
+
 ## Engineering highlights
 
 - **Concurrency-safe inventory:** seat rows are locked with `SELECT ... FOR
@@ -108,7 +117,7 @@ Vitest, Render, and Vercel.
 - [x] Idempotent booking requests
 - [x] Multi-tenant isolation with Row-Level Security
 - [ ] Concurrency and load testing
-- [ ] Production deployment
+- [x] Production deployment
 
 ## Verification
 
