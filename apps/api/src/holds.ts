@@ -1,26 +1,25 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { recordAuditEvent } from "./audit.js";
 import { pool } from "./db.js";
 import { setDatabaseContext } from "./db-context.js";
 import { incrementCounter } from "./metrics.js";
+import { hashIdempotencyRequest, IdempotencyConflictError } from "./idempotency.js";
 import type { ReservationInput } from "./validation.js";
+
+export { IdempotencyConflictError } from "./idempotency.js";
 
 const holdDurationMinutes = 5;
 
 export class HoldConflictError extends Error {}
 export class HoldNotFoundError extends Error {}
 export class HoldExpiredError extends Error {}
-export class IdempotencyConflictError extends Error {}
-
 function requestHash(input: ReservationInput) {
-  return createHash("sha256")
-    .update(JSON.stringify({
-      eventId: input.eventId,
-      seatId: input.seatId,
-      customerName: input.customerName,
-      customerEmail: input.customerEmail.toLowerCase(),
-    }))
-    .digest("hex");
+  return hashIdempotencyRequest({
+    eventId: input.eventId,
+    seatId: input.seatId,
+    customerName: input.customerName,
+    customerEmail: input.customerEmail.toLowerCase(),
+  });
 }
 
 export async function createHold(input: ReservationInput, idempotencyKey: string) {
@@ -33,7 +32,7 @@ export async function createHold(input: ReservationInput, idempotencyKey: string
     const previous = await client.query(
       `SELECT request_hash, response
        FROM idempotency_requests
-       WHERE key = $1 AND operation = 'create_hold'`,
+       WHERE key = $1 AND operation = 'create_hold' AND actor_scope = 'public'`,
       [idempotencyKey],
     );
     if (previous.rows[0]) {
@@ -81,8 +80,9 @@ export async function createHold(input: ReservationInput, idempotencyKey: string
       [input.eventId, input.seatId, input.customerName, input.customerEmail, holdToken, holdDurationMinutes],
     );
     await client.query(
-      `INSERT INTO idempotency_requests (key, operation, request_hash, response)
-       VALUES ($1, 'create_hold', $2, $3)`,
+      `INSERT INTO idempotency_requests
+         (key, operation, actor_scope, request_hash, response)
+       VALUES ($1, 'create_hold', 'public', $2, $3)`,
       [idempotencyKey, hash, JSON.stringify(result.rows[0])],
     );
     await recordAuditEvent(client, {

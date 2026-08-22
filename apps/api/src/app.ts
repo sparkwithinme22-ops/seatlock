@@ -6,7 +6,9 @@ import { createToken, hashPassword, requireAuth, verifyPassword, type Authentica
 import { config } from "./config.js";
 import { pool } from "./db.js";
 import { queryWithContext, setDatabaseContext } from "./db-context.js";
-import { confirmHold, createHold, HoldConflictError, HoldExpiredError, HoldNotFoundError, IdempotencyConflictError } from "./holds.js";
+import { confirmHold, createHold, HoldConflictError, HoldExpiredError, HoldNotFoundError } from "./holds.js";
+import { createOrganizerEvent } from "./events.js";
+import { IdempotencyConflictError } from "./idempotency.js";
 import { incrementCounter, renderMetrics } from "./metrics.js";
 import { createEventInput, idempotencyKeyInput, loginInput, registerInput, reservationInput } from "./validation.js";
 
@@ -195,45 +197,27 @@ app.post("/api/organizer/events", requireAuth, async (request: AuthenticatedRequ
     return;
   }
 
-  const client = await pool.connect();
+  const parsedKey = idempotencyKeyInput.safeParse(request.header("idempotency-key"));
+  if (!parsedKey.success) {
+    response.status(400).json({ error: "A valid Idempotency-Key header is required" });
+    return;
+  }
+
   try {
-    await client.query("BEGIN");
-    await setDatabaseContext(client, {
-      accessMode: "tenant",
-      organizerId: request.session!.organizerId,
-    });
-    const eventResult = await client.query(
-      `INSERT INTO events (organizer_id, name, venue, starts_at)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, name, venue, starts_at`,
-      [request.session!.organizerId, parsed.data.name, parsed.data.venue, parsed.data.startsAt],
+    const result = await createOrganizerEvent(
+      parsed.data,
+      request.session!.organizerId,
+      request.session!.userId,
+      parsedKey.data,
     );
-    const createdEvent = eventResult.rows[0];
-    for (let rowIndex = 0; rowIndex < parsed.data.rows; rowIndex += 1) {
-      const rowLabel = String.fromCharCode(65 + rowIndex);
-      for (let seatNumber = 1; seatNumber <= parsed.data.seatsPerRow; seatNumber += 1) {
-        await client.query(
-          "INSERT INTO seats (event_id, label, price_paise) VALUES ($1, $2, $3)",
-          [createdEvent.id, `${rowLabel}${seatNumber}`, parsed.data.priceRupees * 100],
-        );
-      }
-    }
-    await recordAuditEvent(client, {
-      organizerId: request.session!.organizerId,
-      actorType: "organizer",
-      actorId: request.session!.userId,
-      action: "event.created",
-      entityType: "event",
-      entityId: createdEvent.id,
-      metadata: { seatCount: parsed.data.rows * parsed.data.seatsPerRow },
-    });
-    await client.query("COMMIT");
-    response.status(201).json({ ...createdEvent, seat_count: parsed.data.rows * parsed.data.seatsPerRow });
+    response.setHeader("Idempotency-Replayed", String(result.replayed));
+    response.status(result.replayed ? 200 : 201).json(result.event);
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (error instanceof IdempotencyConflictError) {
+      response.status(409).json({ error: error.message });
+      return;
+    }
     next(error);
-  } finally {
-    client.release();
   }
 });
 

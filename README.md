@@ -25,8 +25,8 @@ of inactivity can take longer while the service wakes up.
   confirmation and are reclaimed in batches by a separate worker using
   `FOR UPDATE SKIP LOCKED`.
 - **Idempotent writes:** request hashes and response snapshots ensure retried
-  hold requests produce one mutation; PostgreSQL advisory locks serialize
-  simultaneous retries using the same key.
+  hold and organizer-event requests produce one mutation; PostgreSQL advisory
+  locks serialize simultaneous retries using the same scoped key.
 - **Multi-tenant security:** PostgreSQL Row-Level Security restricts organizer
   events, seats, reservations, and audit records at the database layer.
 - **Transactional auditability:** important state changes write immutable audit
@@ -127,9 +127,9 @@ npm test
 npm run build
 ```
 
-The API suite currently contains 15 tests, including concurrent booking,
-idempotency, expiration locking, RLS isolation, audit immutability, validation,
-authentication, and metrics behavior.
+The API suite currently contains 17 tests, including concurrent booking,
+organizer-event idempotency, expiration locking, RLS isolation, audit
+immutability, validation, authentication, and metrics behavior.
 
 ## API
 

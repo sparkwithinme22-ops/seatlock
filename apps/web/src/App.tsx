@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 type EventSummary = {
   id: string;
@@ -45,6 +45,9 @@ export function App() {
   const [seatHold, setSeatHold] = useState<SeatHold | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [message, setMessage] = useState("");
+  const [creatingEvent, setCreatingEvent] = useState(false);
+  const eventCreationInFlight = useRef(false);
+  const eventCreationKey = useRef<string | null>(null);
 
   async function loadEvents() {
     const data = await api<EventSummary[]>("/api/events");
@@ -157,12 +160,17 @@ export function App() {
 
   async function createEvent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!session) return;
+    if (!session || eventCreationInFlight.current) return;
+    eventCreationInFlight.current = true;
+    setCreatingEvent(true);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    const idempotencyKey = eventCreationKey.current ?? crypto.randomUUID();
+    eventCreationKey.current = idempotencyKey;
     try {
       await api("/api/organizer/events", {
         method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
         body: JSON.stringify({
           name: form.get("name"),
           venue: form.get("venue"),
@@ -173,10 +181,14 @@ export function App() {
         }),
       }, session.token);
       formElement.reset();
-      setMessage("Event created with its complete seat inventory.");
+      eventCreationKey.current = null;
       await Promise.all([loadOrganizerEvents(), loadEvents()]);
+      setMessage("Event created with its complete seat inventory.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not create event");
+    } finally {
+      eventCreationInFlight.current = false;
+      setCreatingEvent(false);
     }
   }
 
@@ -294,7 +306,9 @@ export function App() {
             </div>
             <div className="create-panel">
               <p className="section-label">Create an event</p>
-              <form className="stacked-form" onSubmit={createEvent}>
+              <form className="stacked-form" onChange={() => {
+                if (!eventCreationInFlight.current) eventCreationKey.current = null;
+              }} onSubmit={createEvent}>
                 <label>Event name<input name="name" placeholder="Design After Dark" minLength={3} required /></label>
                 <label>Venue<input name="venue" placeholder="City Auditorium" minLength={2} required /></label>
                 <label>Start time<input name="startsAt" type="datetime-local" required /></label>
@@ -303,7 +317,9 @@ export function App() {
                   <label>Seats / row<input name="seatsPerRow" type="number" min="1" max="30" defaultValue="8" required /></label>
                 </div>
                 <label>Price per seat (₹)<input name="priceRupees" type="number" min="0" defaultValue="500" required /></label>
-                <button className="primary-button">Create event and seats</button>
+                <button className="primary-button" disabled={creatingEvent}>
+                  {creatingEvent ? "Creating event…" : "Create event and seats"}
+                </button>
               </form>
               {message && <p className="message" role="status">{message}</p>}
             </div>

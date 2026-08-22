@@ -30,3 +30,5 @@ export const createEventInput = z.object({
   seatsPerRow: z.number().int().min(1).max(30),
   priceRupees: z.number().int().min(0).max(1_000_000),
 });
+
+export type CreateEventInput = z.infer<typeof createEventInput>;
