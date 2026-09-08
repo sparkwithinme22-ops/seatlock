@@ -18,7 +18,41 @@ type Session = {
   organizer: { id: string; name: string };
 };
 
+type OrganizerProfile = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  organizer_id: string;
+  organization_name: string;
+};
+
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
+const sessionStorageKey = "seatlock.organizer-session";
+
+function readStoredSession(): Session | null {
+  try {
+    const stored = window.sessionStorage.getItem(sessionStorageKey);
+    if (!stored) return null;
+    const session = JSON.parse(stored) as Partial<Session>;
+    if (!session.token || !session.user?.name || !session.organizer?.id) {
+      window.sessionStorage.removeItem(sessionStorageKey);
+      return null;
+    }
+    return session as Session;
+  } catch {
+    window.sessionStorage.removeItem(sessionStorageKey);
+    return null;
+  }
+}
+
+function storeSession(session: Session | null) {
+  if (session) {
+    window.sessionStorage.setItem(sessionStorageKey, JSON.stringify(session));
+  } else {
+    window.sessionStorage.removeItem(sessionStorageKey);
+  }
+}
 
 async function api<T>(path: string, options?: RequestInit, token?: string): Promise<T> {
   const response = await fetch(`${apiUrl}${path}`, {
@@ -37,7 +71,7 @@ async function api<T>(path: string, options?: RequestInit, token?: string): Prom
 export function App() {
   const [view, setView] = useState<"booking" | "auth" | "dashboard">("booking");
   const [authMode, setAuthMode] = useState<"login" | "register">("register");
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<Session | null>(readStoredSession);
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [organizerEvents, setOrganizerEvents] = useState<EventSummary[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<EventSummary | null>(null);
@@ -67,6 +101,26 @@ export function App() {
 
   useEffect(() => {
     loadEvents().catch((error) => setMessage(error.message));
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    api<OrganizerProfile>("/api/organizer/me", undefined, session.token)
+      .then((profile) => {
+        const refreshedSession: Session = {
+          token: session.token,
+          user: { name: profile.name, email: profile.email, role: profile.role },
+          organizer: { id: profile.organizer_id, name: profile.organization_name },
+        };
+        setSession(refreshedSession);
+        storeSession(refreshedSession);
+      })
+      .catch(() => {
+        setSession(null);
+        storeSession(null);
+        setView("auth");
+        setMessage("Your organizer session expired. Please log in again.");
+      });
   }, []);
 
   useEffect(() => {
@@ -151,6 +205,7 @@ export function App() {
         body: JSON.stringify(body),
       });
       setSession(authenticated);
+      storeSession(authenticated);
       setMessage("");
       setView("dashboard");
       await loadOrganizerEvents(authenticated.token);
@@ -189,6 +244,7 @@ export function App() {
 
   function logout() {
     setSession(null);
+    storeSession(null);
     setOrganizerEvents([]);
     setView("booking");
     setMessage("");
@@ -204,9 +260,11 @@ export function App() {
         <button className="brand brand-button" onClick={() => setView("booking")}>SeatLock<span>.</span></button>
         <nav>
           {session && <span className="signed-in">{session.organizer.name}</span>}
-          <button className="nav-button" onClick={() => setView(session ? "dashboard" : "auth")}>
-            {session ? "Dashboard" : "Organizer portal"}
-          </button>
+          {view !== "dashboard" && (
+            <button className="nav-button" onClick={() => setView(session ? "dashboard" : "auth")}>
+              {session ? "Organizer dashboard" : "Organizer portal"}
+            </button>
+          )}
           {session && <button className="nav-button muted" onClick={logout}>Log out</button>}
         </nav>
       </header>
