@@ -13,6 +13,34 @@ const holdDurationMinutes = 5;
 export class HoldConflictError extends Error {}
 export class HoldNotFoundError extends Error {}
 export class HoldExpiredError extends Error {}
+
+export async function getConfirmedBooking(bookingToken: string) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await setDatabaseContext(client, { accessMode: "public" });
+    const result = await client.query(
+      `SELECT r.id, r.created_at, r.customer_name, r.customer_email,
+              e.id AS event_id, e.name AS event_name, e.venue, e.starts_at,
+              s.id AS seat_id, s.label AS seat_label, s.price_paise,
+              pt.name AS pricing_tier
+       FROM reservations r
+       JOIN events e ON e.id = r.event_id
+       JOIN seats s ON s.id = r.seat_id
+       JOIN event_pricing_tiers pt ON pt.id = s.pricing_tier_id
+       WHERE r.hold_token = $1 AND r.status = 'confirmed'`,
+      [bookingToken],
+    );
+    await client.query("COMMIT");
+    if (!result.rows[0]) throw new HoldNotFoundError("Confirmed booking not found");
+    return result.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 function requestHash(input: ReservationInput) {
   return hashIdempotencyRequest({
     eventId: input.eventId,

@@ -27,8 +27,39 @@ type OrganizerProfile = {
   organization_name: string;
 };
 
+type CustomerBooking = {
+  id: string;
+  created_at: string;
+  customer_name: string;
+  customer_email: string;
+  event_id: string;
+  event_name: string;
+  venue: string;
+  starts_at: string;
+  seat_id: string;
+  seat_label: string;
+  price_paise: number;
+  pricing_tier: string;
+};
+
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 const sessionStorageKey = "seatlock.organizer-session";
+const bookingStorageKey = "seatlock.booking-tokens";
+
+function readBookingTokens(): string[] {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(bookingStorageKey) ?? "[]");
+    return Array.isArray(value) ? value.filter((token): token is string => typeof token === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberBookingToken(token: string) {
+  const tokens = Array.from(new Set([token, ...readBookingTokens()]));
+  window.localStorage.setItem(bookingStorageKey, JSON.stringify(tokens));
+  return tokens;
+}
 
 function readStoredSession(): Session | null {
   try {
@@ -69,7 +100,7 @@ async function api<T>(path: string, options?: RequestInit, token?: string): Prom
 }
 
 export function App() {
-  const [view, setView] = useState<"booking" | "auth" | "dashboard">("booking");
+  const [view, setView] = useState<"booking" | "bookings" | "auth" | "dashboard">("booking");
   const [authMode, setAuthMode] = useState<"login" | "register">("register");
   const [session, setSession] = useState<Session | null>(readStoredSession);
   const [events, setEvents] = useState<EventSummary[]>([]);
@@ -81,6 +112,8 @@ export function App() {
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [message, setMessage] = useState("");
   const [creatingEvent, setCreatingEvent] = useState(false);
+  const [bookingTokens, setBookingTokens] = useState<string[]>(readBookingTokens);
+  const [customerBookings, setCustomerBookings] = useState<CustomerBooking[]>([]);
   const eventCreationInFlight = useRef(false);
   const eventCreationKey = useRef<string | null>(null);
 
@@ -99,8 +132,21 @@ export function App() {
     setOrganizerEvents(await api<EventSummary[]>("/api/organizer/events", undefined, token));
   }
 
+  async function loadCustomerBookings(tokens = bookingTokens) {
+    const results = await Promise.allSettled(
+      tokens.map((token) => api<CustomerBooking>(`/api/bookings/${token}`)),
+    );
+    setCustomerBookings(
+      results
+        .filter((result): result is PromiseFulfilledResult<CustomerBooking> => result.status === "fulfilled")
+        .map((result) => result.value)
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+    );
+  }
+
   useEffect(() => {
     loadEvents().catch((error) => setMessage(error.message));
+    loadCustomerBookings().catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -176,6 +222,9 @@ export function App() {
     if (!seatHold || !selectedEvent || !selectedSeat) return;
     try {
       await api(`/api/holds/${seatHold.hold_token}/confirm`, { method: "POST" });
+      const tokens = rememberBookingToken(seatHold.hold_token);
+      setBookingTokens(tokens);
+      await loadCustomerBookings(tokens);
       setMessage(`Seat ${selectedSeat.label} is confirmed. Your booking is complete.`);
       setSeatHold(null);
       setSelectedSeat(null);
@@ -260,6 +309,9 @@ export function App() {
         <button className="brand brand-button" onClick={() => setView("booking")}>SeatLock<span>.</span></button>
         <nav>
           {session && <span className="signed-in">{session.organizer.name}</span>}
+          {view !== "bookings" && (
+            <button className="nav-button" onClick={() => setView("bookings")}>My bookings</button>
+          )}
           {view !== "dashboard" && (
             <button className="nav-button" onClick={() => setView(session ? "dashboard" : "auth")}>
               {session ? "Organizer dashboard" : "Organizer portal"}
@@ -351,6 +403,34 @@ export function App() {
               <button className="primary-button">{authMode === "register" ? "Create organizer account" : "Log in"}</button>
             </form>
             {message && <p className="message" role="status">{message}</p>}
+          </div>
+        </section>
+      )}
+
+      {view === "bookings" && (
+        <section className="dashboard customer-dashboard">
+          <div className="dashboard-heading">
+            <div><p className="eyebrow">Customer dashboard</p><h1>My bookings</h1></div>
+            <button className="secondary-button" onClick={() => setView("booking")}>Book another seat</button>
+          </div>
+          <div className="event-list-panel">
+            {customerBookings.length === 0 && (
+              <p className="empty-state">No confirmed bookings saved in this browser yet.</p>
+            )}
+            {customerBookings.map((booking) => (
+              <article className="customer-booking" key={booking.id}>
+                <div>
+                  <span className="booking-status">Confirmed</span>
+                  <h2>{booking.event_name}</h2>
+                  <p>{booking.venue} · {new Date(booking.starts_at).toLocaleString()}</p>
+                </div>
+                <div className="booking-seat">
+                  <span>{booking.pricing_tier}</span>
+                  <strong>Seat {booking.seat_label}</strong>
+                  <small>₹{booking.price_paise / 100}</small>
+                </div>
+              </article>
+            ))}
           </div>
         </section>
       )}

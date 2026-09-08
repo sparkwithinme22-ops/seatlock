@@ -6,7 +6,7 @@ import { createToken, hashPassword, requireAuth, verifyPassword, type Authentica
 import { config } from "./config.js";
 import { pool } from "./db.js";
 import { queryWithContext, setDatabaseContext } from "./db-context.js";
-import { confirmHold, createHold, HoldConflictError, HoldExpiredError, HoldNotFoundError } from "./holds.js";
+import { confirmHold, createHold, getConfirmedBooking, HoldConflictError, HoldExpiredError, HoldNotFoundError } from "./holds.js";
 import { createOrganizerEvent } from "./events.js";
 import { IdempotencyConflictError } from "./idempotency.js";
 import { incrementCounter, renderMetrics } from "./metrics.js";
@@ -306,6 +306,23 @@ app.post("/api/holds/:holdToken/confirm", async (request, response, next) => {
       response.status(410).json({ error: error.message });
       return;
     }
+    if (error instanceof HoldNotFoundError) {
+      response.status(404).json({ error: error.message });
+      return;
+    }
+    next(error);
+  }
+});
+
+app.get("/api/bookings/:bookingToken", async (request, response, next) => {
+  const parsedToken = idempotencyKeyInput.safeParse(request.params.bookingToken);
+  if (!parsedToken.success) {
+    response.status(400).json({ error: "Invalid booking reference" });
+    return;
+  }
+  try {
+    response.json(await getConfirmedBooking(parsedToken.data));
+  } catch (error) {
     if (error instanceof HoldNotFoundError) {
       response.status(404).json({ error: error.message });
       return;
