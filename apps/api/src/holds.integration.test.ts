@@ -14,6 +14,7 @@ let eventId: string;
 let seatId: string;
 let secondSeatId: string;
 let thirdSeatId: string;
+let pricingTierId: string;
 let retryKey: string;
 const usedIdempotencyKeys: string[] = [];
 
@@ -26,17 +27,22 @@ beforeAll(async () => {
      VALUES ($1, 'Race Test', 'Test Venue', now() + interval '1 day') RETURNING id`,
     [organizerId],
   )).rows[0].id;
-  seatId = (await pool.query(
-    "INSERT INTO seats (event_id, label, price_paise) VALUES ($1, 'A1', 10000) RETURNING id",
+  pricingTierId = (await pool.query(
+    `INSERT INTO event_pricing_tiers (event_id, name, price_paise, color, sort_order)
+     VALUES ($1, 'Standard', 10000, '#80ED99', 0) RETURNING id`,
     [eventId],
+  )).rows[0].id;
+  seatId = (await pool.query(
+    "INSERT INTO seats (event_id, pricing_tier_id, label, price_paise) VALUES ($1, $2, 'A1', 10000) RETURNING id",
+    [eventId, pricingTierId],
   )).rows[0].id;
   secondSeatId = (await pool.query(
-    "INSERT INTO seats (event_id, label, price_paise) VALUES ($1, 'A2', 10000) RETURNING id",
-    [eventId],
+    "INSERT INTO seats (event_id, pricing_tier_id, label, price_paise) VALUES ($1, $2, 'A2', 10000) RETURNING id",
+    [eventId, pricingTierId],
   )).rows[0].id;
   thirdSeatId = (await pool.query(
-    "INSERT INTO seats (event_id, label, price_paise) VALUES ($1, 'A3', 10000) RETURNING id",
-    [eventId],
+    "INSERT INTO seats (event_id, pricing_tier_id, label, price_paise) VALUES ($1, $2, 'A3', 10000) RETURNING id",
+    [eventId, pricingTierId],
   )).rows[0].id;
 });
 

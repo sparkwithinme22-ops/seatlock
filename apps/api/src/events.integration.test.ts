@@ -14,9 +14,11 @@ const eventInput = {
   name: `Idempotent Event ${randomUUID()}`,
   venue: "Concurrency Hall",
   startsAt: new Date(Date.now() + 86_400_000).toISOString(),
-  rows: 2,
   seatsPerRow: 3,
-  priceRupees: 750,
+  pricingTiers: [
+    { name: "VIP", rowCount: 1, priceRupees: 1200, color: "#F6C453" },
+    { name: "Standard", rowCount: 1, priceRupees: 750, color: "#80ED99" },
+  ],
 };
 
 beforeAll(async () => {
@@ -65,6 +67,19 @@ describe("organizer event idempotency", () => {
       [events.rows[0].id],
     );
     expect(seats.rows[0].count).toBe(6);
+    const tiers = await testPool.query(
+      `SELECT pt.name, pt.price_paise, count(s.id)::int AS seat_count
+       FROM event_pricing_tiers pt
+       JOIN seats s ON s.pricing_tier_id = pt.id
+       WHERE pt.event_id = $1
+       GROUP BY pt.id
+       ORDER BY pt.sort_order`,
+      [events.rows[0].id],
+    );
+    expect(tiers.rows).toEqual([
+      { name: "VIP", price_paise: 120000, seat_count: 3 },
+      { name: "Standard", price_paise: 75000, seat_count: 3 },
+    ]);
   });
 
   it("rejects reuse of the same key with different event details", async () => {

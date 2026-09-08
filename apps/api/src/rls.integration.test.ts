@@ -9,6 +9,8 @@ let eventA: string;
 let eventB: string;
 let seatA: string;
 let seatB: string;
+let tierA: string;
+let tierB: string;
 
 async function queryAsTenant(
   organizerId: string,
@@ -52,13 +54,23 @@ beforeAll(async () => {
      VALUES ($1, 'Tenant B Event', 'B Hall', now() + interval '1 day') RETURNING id`,
     [organizerB],
   )).rows[0].id;
-  seatA = (await testPool.query(
-    "INSERT INTO seats (event_id, label, price_paise) VALUES ($1, 'A1', 10000) RETURNING id",
+  tierA = (await testPool.query(
+    `INSERT INTO event_pricing_tiers (event_id, name, price_paise, color, sort_order)
+     VALUES ($1, 'Standard', 10000, '#80ED99', 0) RETURNING id`,
     [eventA],
   )).rows[0].id;
-  seatB = (await testPool.query(
-    "INSERT INTO seats (event_id, label, price_paise) VALUES ($1, 'B1', 10000) RETURNING id",
+  tierB = (await testPool.query(
+    `INSERT INTO event_pricing_tiers (event_id, name, price_paise, color, sort_order)
+     VALUES ($1, 'Standard', 10000, '#80ED99', 0) RETURNING id`,
     [eventB],
+  )).rows[0].id;
+  seatA = (await testPool.query(
+    "INSERT INTO seats (event_id, pricing_tier_id, label, price_paise) VALUES ($1, $2, 'A1', 10000) RETURNING id",
+    [eventA, tierA],
+  )).rows[0].id;
+  seatB = (await testPool.query(
+    "INSERT INTO seats (event_id, pricing_tier_id, label, price_paise) VALUES ($1, $2, 'B1', 10000) RETURNING id",
+    [eventB, tierB],
   )).rows[0].id;
   await testPool.query(
     `INSERT INTO reservations
@@ -100,9 +112,8 @@ describe("PostgreSQL tenant isolation", () => {
   it("rejects inserting a seat into another tenant's event", async () => {
     await expect(queryAsTenant(
       organizerA,
-      "INSERT INTO seats (event_id, label, price_paise) VALUES ($1, 'X1', 100)",
-      [eventB],
+      "INSERT INTO seats (event_id, pricing_tier_id, label, price_paise) VALUES ($1, $2, 'X1', 100)",
+      [eventB, tierB],
     )).rejects.toThrow(/row-level security policy/i);
   });
 });
-

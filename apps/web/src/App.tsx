@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState, type CSSProperties } from "react";
+import { EventCreationForm, type EventDraft } from "./EventCreationForm";
 
 type EventSummary = {
   id: string;
@@ -9,7 +10,7 @@ type EventSummary = {
   reserved_count: number;
 };
 
-type Seat = { id: string; label: string; price_paise: number; reserved: boolean };
+type Seat = { id: string; label: string; price_paise: number; pricing_tier: string; pricing_color: string; reserved: boolean };
 type SeatHold = { hold_token: string; expires_at: string; seat_id: string };
 type Session = {
   token: string;
@@ -158,13 +159,10 @@ export function App() {
     }
   }
 
-  async function createEvent(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!session || eventCreationInFlight.current) return;
+  async function createEvent(draft: EventDraft) {
+    if (!session || eventCreationInFlight.current) return false;
     eventCreationInFlight.current = true;
     setCreatingEvent(true);
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
     const idempotencyKey = eventCreationKey.current ?? crypto.randomUUID();
     eventCreationKey.current = idempotencyKey;
     try {
@@ -172,20 +170,17 @@ export function App() {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },
         body: JSON.stringify({
-          name: form.get("name"),
-          venue: form.get("venue"),
-          startsAt: new Date(String(form.get("startsAt"))).toISOString(),
-          rows: Number(form.get("rows")),
-          seatsPerRow: Number(form.get("seatsPerRow")),
-          priceRupees: Number(form.get("priceRupees")),
+          ...draft,
+          startsAt: new Date(draft.startsAt).toISOString(),
         }),
       }, session.token);
-      formElement.reset();
       eventCreationKey.current = null;
       await Promise.all([loadOrganizerEvents(), loadEvents()]);
       setMessage("Event created with its complete seat inventory.");
+      return true;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not create event");
+      return false;
     } finally {
       eventCreationInFlight.current = false;
       setCreatingEvent(false);
@@ -198,6 +193,10 @@ export function App() {
     setView("booking");
     setMessage("");
   }
+
+  const visiblePricingTiers = Array.from(
+    new Map(seats.map((seat) => [seat.pricing_tier, seat.pricing_color])).entries(),
+  );
 
   return (
     <main>
@@ -234,16 +233,27 @@ export function App() {
             <div className="booking-panel">
               <div className="panel-heading">
                 <div><p className="section-label">Choose a seat</p><h2>{selectedEvent?.name ?? "Loading…"}</h2></div>
-                <div className="legend"><i /> Available <i className="taken" /> Taken</div>
+                <div className="legend tier-legend">
+                  {visiblePricingTiers.map(([name, color]) => <span key={name}><i style={{ background: color }} />{name}</span>)}
+                  <span><i className="taken" />Taken</span>
+                </div>
               </div>
               <div className="stage">STAGE</div>
               <div className="seat-grid">
                 {seats.map((seat) => (
-                  <button aria-label={`Seat ${seat.label}${seat.reserved ? ", reserved" : ""}`} className={`seat ${seat.reserved ? "reserved" : ""} ${selectedSeat?.id === seat.id ? "selected" : ""}`} disabled={seat.reserved} key={seat.id} onClick={() => setSelectedSeat(seat)}>{seat.label}</button>
+                  <button
+                    aria-label={`Seat ${seat.label}, ${seat.pricing_tier}, ₹${seat.price_paise / 100}${seat.reserved ? ", reserved" : ""}`}
+                    className={`seat ${seat.reserved ? "reserved" : ""} ${selectedSeat?.id === seat.id ? "selected" : ""}`}
+                    disabled={seat.reserved}
+                    key={seat.id}
+                    onClick={() => setSelectedSeat(seat)}
+                    style={{ "--tier-color": seat.pricing_color } as CSSProperties}
+                    title={`${seat.pricing_tier} · ₹${seat.price_paise / 100}`}
+                  >{seat.label}</button>
                 ))}
               </div>
               <form className="booking-form" onSubmit={reserve}>
-                <div className="selection"><span>Selected seat</span><strong>{selectedSeat ? `${selectedSeat.label} · ₹${(selectedSeat.price_paise / 100).toFixed(0)}` : "None"}</strong></div>
+                <div className="selection"><span>Selected seat</span><strong>{selectedSeat ? `${selectedSeat.label} · ${selectedSeat.pricing_tier} · ₹${(selectedSeat.price_paise / 100).toFixed(0)}` : "None"}</strong></div>
                 <input name="name" placeholder="Your name" minLength={2} required />
                 <input name="email" type="email" placeholder="Email address" required />
                 <button className="primary-button" disabled={!selectedSeat || Boolean(seatHold)}>Hold seat</button>
@@ -306,21 +316,13 @@ export function App() {
             </div>
             <div className="create-panel">
               <p className="section-label">Create an event</p>
-              <form className="stacked-form" onChange={() => {
-                if (!eventCreationInFlight.current) eventCreationKey.current = null;
-              }} onSubmit={createEvent}>
-                <label>Event name<input name="name" placeholder="Design After Dark" minLength={3} required /></label>
-                <label>Venue<input name="venue" placeholder="City Auditorium" minLength={2} required /></label>
-                <label>Start time<input name="startsAt" type="datetime-local" required /></label>
-                <div className="field-row">
-                  <label>Rows<input name="rows" type="number" min="1" max="10" defaultValue="3" required /></label>
-                  <label>Seats / row<input name="seatsPerRow" type="number" min="1" max="30" defaultValue="8" required /></label>
-                </div>
-                <label>Price per seat (₹)<input name="priceRupees" type="number" min="0" defaultValue="500" required /></label>
-                <button className="primary-button" disabled={creatingEvent}>
-                  {creatingEvent ? "Creating event…" : "Create event and seats"}
-                </button>
-              </form>
+              <EventCreationForm
+                creating={creatingEvent}
+                onChange={() => {
+                  if (!eventCreationInFlight.current) eventCreationKey.current = null;
+                }}
+                onCreate={createEvent}
+              />
               {message && <p className="message" role="status">{message}</p>}
             </div>
           </div>

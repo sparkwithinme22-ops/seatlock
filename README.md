@@ -29,6 +29,8 @@ of inactivity can take longer while the service wakes up.
   locks serialize simultaneous retries using the same scoped key.
 - **Multi-tenant security:** PostgreSQL Row-Level Security restricts organizer
   events, seats, reservations, and audit records at the database layer.
+- **Tiered inventory:** organizers can assign named, color-coded pricing tiers
+  to rows while each generated seat retains its exact transactional price.
 - **Transactional auditability:** important state changes write immutable audit
   events in the same transaction as the business operation.
 - **Operational visibility:** structured JSON request logs, request IDs,
@@ -127,7 +129,7 @@ npm test
 npm run build
 ```
 
-The API suite currently contains 17 tests, including concurrent booking,
+The API suite currently contains 20 tests, including concurrent booking,
 organizer-event idempotency, expiration locking, RLS isolation, audit
 immutability, validation, authentication, and metrics behavior.
 

@@ -244,8 +244,10 @@ app.get("/api/events/:eventId/seats", async (request, response, next) => {
     const result = await queryWithContext(
       { accessMode: "public" },
       `SELECT s.id, s.label, s.price_paise,
+              pt.name AS pricing_tier, pt.color AS pricing_color,
               (r.id IS NOT NULL) AS reserved
        FROM seats s
+       JOIN event_pricing_tiers pt ON pt.id = s.pricing_tier_id
        LEFT JOIN reservations r
          ON r.seat_id = s.id
         AND (r.status = 'confirmed' OR (r.status = 'held' AND r.expires_at > now()))
