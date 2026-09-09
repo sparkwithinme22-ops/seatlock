@@ -1,6 +1,7 @@
 import { app } from "./app.js";
 import { config } from "./config.js";
 import { pool } from "./db.js";
+import { seatUpdateHub } from "./seat-updates.js";
 
 const server = app.listen(config.port, () => {
   console.log(JSON.stringify({
@@ -18,6 +19,7 @@ async function shutdown() {
   shuttingDown = true;
 
   server.close(async () => {
+    await seatUpdateHub.close();
     await pool.end();
     process.exit(0);
   });

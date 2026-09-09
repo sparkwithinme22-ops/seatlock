@@ -10,7 +10,8 @@ import { confirmHold, createHold, getConfirmedBooking, getCustomerBookings, Hold
 import { createOrganizerEvent } from "./events.js";
 import { IdempotencyConflictError } from "./idempotency.js";
 import { incrementCounter, renderMetrics } from "./metrics.js";
-import { createEventInput, idempotencyKeyInput, loginInput, registerInput, reservationInput } from "./validation.js";
+import { seatUpdateHub } from "./seat-updates.js";
+import { createEventInput, eventIdInput, idempotencyKeyInput, loginInput, registerInput, reservationInput } from "./validation.js";
 
 export const app = express();
 
@@ -274,6 +275,24 @@ app.get("/api/events/:eventId/seats", async (request, response, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+app.get("/api/events/:eventId/stream", (request, response) => {
+  const parsedEventId = eventIdInput.safeParse(request.params.eventId);
+  if (!parsedEventId.success) {
+    response.status(400).json({ error: "Invalid event" });
+    return;
+  }
+  response.status(200);
+  response.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  response.flushHeaders();
+  const unsubscribe = seatUpdateHub.subscribe(parsedEventId.data, response);
+  request.on("close", unsubscribe);
 });
 
 app.post("/api/holds", requireAuth, async (request: AuthenticatedRequest, response, next) => {

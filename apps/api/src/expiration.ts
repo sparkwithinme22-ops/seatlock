@@ -32,6 +32,7 @@ export async function expireHoldsBatch(limit = 100) {
         entityId: expired.id,
         metadata: { eventId: expired.event_id, seatId: expired.seat_id },
       });
+      await client.query("SELECT pg_notify('seat_inventory_changed', $1)", [expired.event_id]);
     }
     return result.rows;
   });

@@ -131,6 +131,7 @@ export async function createHold(
       entityId: result.rows[0].id,
       metadata: { eventId: input.eventId, seatId: input.seatId },
     });
+    await client.query("SELECT pg_notify('seat_inventory_changed', $1)", [input.eventId]);
     await client.query("COMMIT");
     incrementCounter("seatlock_holds_created_total");
     return { hold: result.rows[0], replayed: false };
@@ -211,6 +212,7 @@ export async function confirmHold(holdToken: string, customerUserId?: string) {
       entityId: hold.id,
       metadata: { eventId: hold.event_id, seatId: hold.seat_id },
     });
+    await client.query("SELECT pg_notify('seat_inventory_changed', $1)", [hold.event_id]);
     await client.query("COMMIT");
     incrementCounter("seatlock_bookings_confirmed_total");
     return confirmed.rows[0];

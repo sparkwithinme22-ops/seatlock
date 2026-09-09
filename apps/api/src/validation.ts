@@ -9,6 +9,7 @@ export const reservationInput = z.object({
 
 export type ReservationInput = z.infer<typeof reservationInput>;
 export const idempotencyKeyInput = z.uuid();
+export const eventIdInput = z.uuid();
 
 export const registerInput = z.object({
   accountType: z.enum(["customer", "organizer"]).default("customer"),

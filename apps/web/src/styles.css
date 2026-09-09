@@ -28,6 +28,10 @@ aside, .booking-panel { background: rgba(20, 28, 24, .88); border: 1px solid #2b
 .event-card.active { background: #202c27; border-color: #394941; }
 .panel-heading { display: flex; justify-content: space-between; align-items: end; gap: 20px; }
 h2 { margin: 0; font: 700 27px 'Manrope'; letter-spacing: -1px; }
+.live-status { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; color: #7f8c85; font-size: 11px; }
+.live-status i { width: 7px; height: 7px; border-radius: 50%; background: #f6c453; }
+.live-status.live { color: #80ed99; }
+.live-status.live i { background: #80ed99; box-shadow: 0 0 0 4px rgba(128, 237, 153, .1); }
 .legend { display: flex; gap: 8px; align-items: center; color: #7f8b85; font-size: 11px; }
 .legend i { width: 9px; height: 9px; border-radius: 3px; background: #80ed99; }
 .legend i.taken { margin-left: 7px; background: #35423c; }

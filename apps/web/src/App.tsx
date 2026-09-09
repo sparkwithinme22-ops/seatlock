@@ -97,6 +97,7 @@ export function App() {
   const [message, setMessage] = useState("");
   const [creatingEvent, setCreatingEvent] = useState(false);
   const [customerBookings, setCustomerBookings] = useState<CustomerBooking[]>([]);
+  const [seatStreamStatus, setSeatStreamStatus] = useState<"connecting" | "live" | "reconnecting">("connecting");
   const eventCreationInFlight = useRef(false);
   const eventCreationKey = useRef<string | null>(null);
 
@@ -150,6 +151,18 @@ export function App() {
       setSelectedSeat(null);
       loadSeats(selectedEvent.id).catch((error) => setMessage(error.message));
     }
+  }, [selectedEvent]);
+
+  useEffect(() => {
+    if (!selectedEvent) return;
+    setSeatStreamStatus("connecting");
+    const stream = new EventSource(`${apiUrl}/api/events/${selectedEvent.id}/stream`);
+    stream.onopen = () => setSeatStreamStatus("live");
+    stream.onerror = () => setSeatStreamStatus("reconnecting");
+    stream.addEventListener("seats_changed", () => {
+      void Promise.all([loadSeats(selectedEvent.id), loadEvents()]);
+    });
+    return () => stream.close();
   }, [selectedEvent]);
 
   useEffect(() => {
@@ -324,7 +337,11 @@ export function App() {
 
             <div className="booking-panel">
               <div className="panel-heading">
-                <div><p className="section-label">Choose a seat</p><h2>{selectedEvent?.name ?? "Loading…"}</h2></div>
+                <div>
+                  <p className="section-label">Choose a seat</p>
+                  <h2>{selectedEvent?.name ?? "Loading…"}</h2>
+                  <span className={`live-status ${seatStreamStatus}`}><i />{seatStreamStatus === "live" ? "Live availability" : "Connecting live updates…"}</span>
+                </div>
                 <div className="legend tier-legend">
                   {visiblePricingTiers.map(([name, color]) => <span key={name}><i style={{ background: color }} />{name}</span>)}
                   <span><i className="taken" />Taken</span>
