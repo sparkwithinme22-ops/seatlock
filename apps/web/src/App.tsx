@@ -402,7 +402,6 @@ export function App() {
         <section className="dashboard customer-dashboard">
           <div className="dashboard-heading">
             <div><p className="eyebrow">Customer dashboard</p><h1>My bookings</h1></div>
-            <button className="secondary-button" onClick={() => setView("booking")}>Book another seat</button>
           </div>
           <div className="event-list-panel">
             {customerBookings.length === 0 && (
