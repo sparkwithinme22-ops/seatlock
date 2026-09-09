@@ -47,7 +47,7 @@ class SeatUpdateHub {
   }
 
   private async connect() {
-    const listener = new pg.Client({ connectionString: config.databaseUrl });
+    const listener = new pg.Client({ connectionString: config.listenerDatabaseUrl });
     try {
       await listener.connect();
       await listener.query(`LISTEN ${channel}`);
@@ -59,6 +59,10 @@ class SeatUpdateHub {
       listener.on("error", () => this.handleDisconnect(listener));
       listener.on("end", () => this.handleDisconnect(listener));
       this.listener = listener;
+      console.log(JSON.stringify({
+        event: "seat_update_listener_connected",
+        timestamp: new Date().toISOString(),
+      }));
     } catch (error) {
       await listener.end().catch(() => undefined);
       console.error(JSON.stringify({
@@ -86,7 +90,14 @@ class SeatUpdateHub {
 
   private publish(eventId: string) {
     const payload = `event: seats_changed\ndata: ${JSON.stringify({ eventId })}\n\n`;
-    for (const response of this.subscribers.get(eventId) ?? []) response.write(payload);
+    const subscribers = this.subscribers.get(eventId) ?? [];
+    for (const response of subscribers) response.write(payload);
+    console.log(JSON.stringify({
+      event: "seat_update_published",
+      event_id: eventId,
+      subscribers: subscribers instanceof Set ? subscribers.size : 0,
+      timestamp: new Date().toISOString(),
+    }));
   }
 
   private sendHeartbeats() {

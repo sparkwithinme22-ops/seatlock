@@ -15,16 +15,25 @@ const jwtSecret = requiredInProduction(
   "seatlock-local-development-secret",
 );
 
+const databaseUrl = requiredInProduction(
+  "DATABASE_URL",
+  "postgres://seatlock:seatlock@localhost:5432/seatlock",
+);
+
+function directDatabaseUrl(connectionString: string) {
+  const url = new URL(connectionString);
+  url.hostname = url.hostname.replace("-pooler.", ".");
+  return url.toString();
+}
+
 if (isProduction && jwtSecret.length < 32) {
   throw new Error("JWT_SECRET must contain at least 32 characters in production");
 }
 
 export const config = {
   environment: process.env.NODE_ENV ?? "development",
-  databaseUrl: requiredInProduction(
-    "DATABASE_URL",
-    "postgres://seatlock:seatlock@localhost:5432/seatlock",
-  ),
+  databaseUrl,
+  listenerDatabaseUrl: process.env.DATABASE_DIRECT_URL ?? directDatabaseUrl(databaseUrl),
   port: Number(process.env.PORT ?? 3001),
   jwtSecret,
   allowedOrigins: requiredInProduction("ALLOWED_ORIGINS", "http://localhost:5173")
