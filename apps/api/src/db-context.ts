@@ -3,6 +3,7 @@ import { pool } from "./db.js";
 
 export type DatabaseContext =
   | { accessMode: "public" }
+  | { accessMode: "customer"; userId: string }
   | { accessMode: "tenant"; organizerId: string };
 
 export async function setDatabaseContext(
@@ -17,6 +18,10 @@ export async function setDatabaseContext(
   await client.query(
     "SELECT set_config('app.organizer_id', $1, true)",
     [context.accessMode === "tenant" ? context.organizerId : ""],
+  );
+  await client.query(
+    "SELECT set_config('app.user_id', $1, true)",
+    [context.accessMode === "customer" ? context.userId : ""],
   );
 }
 
@@ -46,4 +51,3 @@ export async function queryWithContext<T extends QueryResultRow = QueryResultRow
 ): Promise<QueryResult<T>> {
   return withDatabaseContext(context, (client) => client.query<T>(text, values));
 }
-

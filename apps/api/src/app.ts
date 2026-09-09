@@ -2,11 +2,11 @@ import { randomUUID } from "node:crypto";
 import cors from "cors";
 import express from "express";
 import { recordAuditEvent } from "./audit.js";
-import { createToken, hashPassword, requireAuth, verifyPassword, type AuthenticatedRequest } from "./auth.js";
+import { createToken, hashPassword, requireAuth, requireOrganizer, verifyPassword, type AuthenticatedRequest } from "./auth.js";
 import { config } from "./config.js";
 import { pool } from "./db.js";
 import { queryWithContext, setDatabaseContext } from "./db-context.js";
-import { confirmHold, createHold, getConfirmedBooking, HoldConflictError, HoldExpiredError, HoldNotFoundError } from "./holds.js";
+import { confirmHold, createHold, getConfirmedBooking, getCustomerBookings, HoldConflictError, HoldExpiredError, HoldNotFoundError } from "./holds.js";
 import { createOrganizerEvent } from "./events.js";
 import { IdempotencyConflictError } from "./idempotency.js";
 import { incrementCounter, renderMetrics } from "./metrics.js";
@@ -67,31 +67,43 @@ app.post("/api/auth/register", async (request, response, next) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const organizer = await client.query(
-      "INSERT INTO organizers (name) VALUES ($1) RETURNING id, name",
-      [parsed.data.organizationName],
-    );
     const passwordHash = await hashPassword(parsed.data.password);
-    const member = await client.query(
-      `INSERT INTO organizer_members (organizer_id, name, email, password_hash)
-       VALUES ($1, $2, lower($3), $4)
-       RETURNING id, organizer_id, name, email, role`,
-      [organizer.rows[0].id, parsed.data.name, parsed.data.email, passwordHash],
+    const userResult = await client.query(
+      `INSERT INTO users (name, email, password_hash)
+       VALUES ($1, lower($2), $3)
+       RETURNING id, name, email`,
+      [parsed.data.name, parsed.data.email, passwordHash],
     );
-    await recordAuditEvent(client, {
-      organizerId: organizer.rows[0].id,
-      actorType: "organizer",
-      actorId: member.rows[0].id,
-      action: "organizer.registered",
-      entityType: "organizer",
-      entityId: organizer.rows[0].id,
-    });
+    const user = userResult.rows[0];
+    let organizer: { id: string; name: string } | null = null;
+    let role: "customer" | "owner" = "customer";
+    if (parsed.data.accountType === "organizer") {
+      const organizerResult = await client.query(
+        "INSERT INTO organizers (name) VALUES ($1) RETURNING id, name",
+        [parsed.data.organizationName],
+      );
+      const createdOrganizer = organizerResult.rows[0] as { id: string; name: string };
+      organizer = createdOrganizer;
+      await client.query(
+        `INSERT INTO organizer_members (organizer_id, user_id, name, email, password_hash)
+         VALUES ($1, $2, $3, lower($4), $5)`,
+        [createdOrganizer.id, user.id, user.name, user.email, passwordHash],
+      );
+      role = "owner";
+      await recordAuditEvent(client, {
+        organizerId: createdOrganizer.id,
+        actorType: "organizer",
+        actorId: user.id,
+        action: "organizer.registered",
+        entityType: "organizer",
+        entityId: createdOrganizer.id,
+      });
+    }
     await client.query("COMMIT");
-    const user = member.rows[0];
     response.status(201).json({
-      token: createToken({ userId: user.id, organizerId: user.organizer_id, role: user.role }),
-      user,
-      organizer: organizer.rows[0],
+      token: createToken({ userId: user.id, ...(organizer ? { organizerId: organizer.id } : {}), role }),
+      user: { ...user, role },
+      organizer,
     });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -113,11 +125,12 @@ app.post("/api/auth/login", async (request, response, next) => {
   }
   try {
     const result = await pool.query(
-      `SELECT m.id, m.organizer_id, m.name, m.email, m.role, m.password_hash,
-              o.name AS organization_name
-       FROM organizer_members m
-       JOIN organizers o ON o.id = m.organizer_id
-       WHERE m.email = lower($1)`,
+      `SELECT u.id, u.name, u.email, u.password_hash,
+              m.organizer_id, m.role, o.name AS organization_name
+       FROM users u
+       LEFT JOIN organizer_members m ON m.user_id = u.id
+       LEFT JOIN organizers o ON o.id = m.organizer_id
+       WHERE u.email = lower($1)`,
       [parsed.data.email],
     );
     const user = result.rows[0];
@@ -126,23 +139,25 @@ app.post("/api/auth/login", async (request, response, next) => {
       return;
     }
     response.json({
-      token: createToken({ userId: user.id, organizerId: user.organizer_id, role: user.role }),
-      user: { id: user.id, organizer_id: user.organizer_id, name: user.name, email: user.email, role: user.role },
-      organizer: { id: user.organizer_id, name: user.organization_name },
+      token: createToken({ userId: user.id, ...(user.organizer_id ? { organizerId: user.organizer_id } : {}), role: user.role ?? "customer" }),
+      user: { id: user.id, name: user.name, email: user.email, role: user.role ?? "customer" },
+      organizer: user.organizer_id ? { id: user.organizer_id, name: user.organization_name } : null,
     });
   } catch (error) {
     next(error);
   }
 });
 
-app.get("/api/organizer/me", requireAuth, async (request: AuthenticatedRequest, response, next) => {
+app.get("/api/auth/me", requireAuth, async (request: AuthenticatedRequest, response, next) => {
   try {
     const result = await pool.query(
-      `SELECT m.id, m.name, m.email, m.role, o.id AS organizer_id, o.name AS organization_name
-       FROM organizer_members m
-       JOIN organizers o ON o.id = m.organizer_id
-       WHERE m.id = $1 AND m.organizer_id = $2`,
-      [request.session!.userId, request.session!.organizerId],
+      `SELECT u.id, u.name, u.email, coalesce(m.role::text, 'customer') AS role,
+              o.id AS organizer_id, o.name AS organization_name
+       FROM users u
+       LEFT JOIN organizer_members m ON m.user_id = u.id
+       LEFT JOIN organizers o ON o.id = m.organizer_id
+       WHERE u.id = $1`,
+      [request.session!.userId],
     );
     if (!result.rows[0]) {
       response.status(404).json({ error: "Account not found" });
@@ -154,10 +169,10 @@ app.get("/api/organizer/me", requireAuth, async (request: AuthenticatedRequest, 
   }
 });
 
-app.get("/api/organizer/events", requireAuth, async (request: AuthenticatedRequest, response, next) => {
+app.get("/api/organizer/events", requireOrganizer, async (request: AuthenticatedRequest, response, next) => {
   try {
     const result = await queryWithContext(
-      { accessMode: "tenant", organizerId: request.session!.organizerId },
+      { accessMode: "tenant", organizerId: request.session!.organizerId! },
       `SELECT e.id, e.name, e.venue, e.starts_at,
               count(s.id)::int AS seat_count,
               count(r.id) FILTER (WHERE r.status = 'confirmed')::int AS reserved_count
@@ -175,10 +190,10 @@ app.get("/api/organizer/events", requireAuth, async (request: AuthenticatedReque
   }
 });
 
-app.get("/api/organizer/audit-events", requireAuth, async (request: AuthenticatedRequest, response, next) => {
+app.get("/api/organizer/audit-events", requireOrganizer, async (request: AuthenticatedRequest, response, next) => {
   try {
     const result = await queryWithContext(
-      { accessMode: "tenant", organizerId: request.session!.organizerId },
+      { accessMode: "tenant", organizerId: request.session!.organizerId! },
       `SELECT id, actor_type, actor_id, action, entity_type, entity_id, metadata, created_at
        FROM audit_events
        ORDER BY created_at DESC
@@ -190,7 +205,7 @@ app.get("/api/organizer/audit-events", requireAuth, async (request: Authenticate
   }
 });
 
-app.post("/api/organizer/events", requireAuth, async (request: AuthenticatedRequest, response, next) => {
+app.post("/api/organizer/events", requireOrganizer, async (request: AuthenticatedRequest, response, next) => {
   const parsed = createEventInput.safeParse(request.body);
   if (!parsed.success) {
     response.status(400).json({ error: "Invalid event", details: parsed.error.flatten() });
@@ -206,7 +221,7 @@ app.post("/api/organizer/events", requireAuth, async (request: AuthenticatedRequ
   try {
     const result = await createOrganizerEvent(
       parsed.data,
-      request.session!.organizerId,
+      request.session!.organizerId!,
       request.session!.userId,
       parsedKey.data,
     );
@@ -261,7 +276,7 @@ app.get("/api/events/:eventId/seats", async (request, response, next) => {
   }
 });
 
-app.post("/api/holds", async (request, response, next) => {
+app.post("/api/holds", requireAuth, async (request: AuthenticatedRequest, response, next) => {
   const parsed = reservationInput.safeParse(request.body);
   if (!parsed.success) {
     response.status(400).json({
@@ -278,7 +293,16 @@ app.post("/api/holds", async (request, response, next) => {
   }
 
   try {
-    const result = await createHold(parsed.data, parsedKey.data);
+    const customer = await pool.query("SELECT id, name, email FROM users WHERE id = $1", [request.session!.userId]);
+    if (!customer.rows[0]) {
+      response.status(401).json({ error: "Account not found" });
+      return;
+    }
+    const result = await createHold(parsed.data, parsedKey.data, {
+      userId: customer.rows[0].id,
+      name: customer.rows[0].name,
+      email: customer.rows[0].email,
+    });
     response.setHeader("Idempotency-Replayed", String(result.replayed));
     response.status(result.replayed ? 200 : 201).json(result.hold);
   } catch (error) {
@@ -298,9 +322,17 @@ app.post("/api/holds", async (request, response, next) => {
   }
 });
 
-app.post("/api/holds/:holdToken/confirm", async (request, response, next) => {
+app.get("/api/bookings", requireAuth, async (request: AuthenticatedRequest, response, next) => {
   try {
-    response.json(await confirmHold(request.params.holdToken));
+    response.json(await getCustomerBookings(request.session!.userId));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/holds/:holdToken/confirm", requireAuth, async (request: AuthenticatedRequest, response, next) => {
+  try {
+    response.json(await confirmHold(String(request.params.holdToken), request.session!.userId));
   } catch (error) {
     if (error instanceof HoldExpiredError) {
       response.status(410).json({ error: error.message });

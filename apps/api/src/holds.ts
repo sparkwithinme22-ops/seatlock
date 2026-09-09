@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { recordAuditEvent } from "./audit.js";
 import { pool } from "./db.js";
-import { setDatabaseContext } from "./db-context.js";
+import { queryWithContext, setDatabaseContext } from "./db-context.js";
 import { incrementCounter } from "./metrics.js";
 import { hashIdempotencyRequest, IdempotencyConflictError } from "./idempotency.js";
 import type { ReservationInput } from "./validation.js";
@@ -45,12 +45,14 @@ function requestHash(input: ReservationInput) {
   return hashIdempotencyRequest({
     eventId: input.eventId,
     seatId: input.seatId,
-    customerName: input.customerName,
-    customerEmail: input.customerEmail.toLowerCase(),
   });
 }
 
-export async function createHold(input: ReservationInput, idempotencyKey: string) {
+export async function createHold(
+  input: ReservationInput,
+  idempotencyKey: string,
+  customer?: { userId: string; name: string; email: string },
+) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -101,11 +103,19 @@ export async function createHold(input: ReservationInput, idempotencyKey: string
     const holdToken = randomUUID();
     const result = await client.query(
       `INSERT INTO reservations
-         (event_id, seat_id, customer_name, customer_email, status, hold_token, expires_at)
-       VALUES ($1, $2, $3, lower($4), 'held', $5, now() + ($6 * interval '1 minute'))
+         (event_id, seat_id, customer_name, customer_email, customer_user_id, status, hold_token, expires_at)
+       VALUES ($1, $2, $3, lower($4), $5, 'held', $6, now() + ($7 * interval '1 minute'))
        RETURNING id, event_id, seat_id, customer_name, customer_email,
                  status, hold_token, expires_at, created_at`,
-      [input.eventId, input.seatId, input.customerName, input.customerEmail, holdToken, holdDurationMinutes],
+      [
+        input.eventId,
+        input.seatId,
+        customer?.name ?? input.customerName ?? "Guest",
+        customer?.email ?? input.customerEmail ?? "guest@seatlock.invalid",
+        customer?.userId ?? null,
+        holdToken,
+        holdDurationMinutes,
+      ],
     );
     await client.query(
       `INSERT INTO idempotency_requests
@@ -132,7 +142,25 @@ export async function createHold(input: ReservationInput, idempotencyKey: string
   }
 }
 
-export async function confirmHold(holdToken: string) {
+export async function getCustomerBookings(userId: string) {
+  const result = await queryWithContext(
+    { accessMode: "customer", userId },
+    `SELECT r.id, r.created_at, r.customer_name, r.customer_email,
+            e.id AS event_id, e.name AS event_name, e.venue, e.starts_at,
+            s.id AS seat_id, s.label AS seat_label, s.price_paise,
+            pt.name AS pricing_tier
+     FROM reservations r
+     JOIN events e ON e.id = r.event_id
+     JOIN seats s ON s.id = r.seat_id
+     JOIN event_pricing_tiers pt ON pt.id = s.pricing_tier_id
+     WHERE r.customer_user_id = $1 AND r.status = 'confirmed'
+     ORDER BY r.created_at DESC`,
+    [userId],
+  );
+  return result.rows;
+}
+
+export async function confirmHold(holdToken: string, customerUserId?: string) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -142,8 +170,9 @@ export async function confirmHold(holdToken: string) {
        FROM reservations r
        JOIN events e ON e.id = r.event_id
        WHERE r.hold_token = $1
+         AND ($2::uuid IS NULL OR r.customer_user_id = $2)
        FOR UPDATE OF r`,
-      [holdToken],
+      [holdToken, customerUserId ?? null],
     );
     const hold = result.rows[0];
     if (!hold) {

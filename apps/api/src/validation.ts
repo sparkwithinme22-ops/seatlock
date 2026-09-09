@@ -3,18 +3,23 @@ import { z } from "zod";
 export const reservationInput = z.object({
   eventId: z.uuid(),
   seatId: z.uuid(),
-  customerName: z.string().trim().min(2).max(100),
-  customerEmail: z.email(),
+  customerName: z.string().trim().min(2).max(100).optional(),
+  customerEmail: z.email().optional(),
 });
 
 export type ReservationInput = z.infer<typeof reservationInput>;
 export const idempotencyKeyInput = z.uuid();
 
 export const registerInput = z.object({
-  organizationName: z.string().trim().min(2).max(100),
+  accountType: z.enum(["customer", "organizer"]).default("customer"),
+  organizationName: z.string().trim().min(2).max(100).optional(),
   name: z.string().trim().min(2).max(100),
   email: z.email(),
   password: z.string().min(10).max(200),
+}).superRefine((value, context) => {
+  if (value.accountType === "organizer" && !value.organizationName) {
+    context.addIssue({ code: "custom", path: ["organizationName"], message: "Organization name is required" });
+  }
 });
 
 export const loginInput = z.object({

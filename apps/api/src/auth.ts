@@ -8,12 +8,26 @@ const scrypt = promisify(scryptCallback);
 
 export type Session = {
   userId: string;
-  organizerId: string;
-  role: "owner" | "manager";
+  organizerId?: string;
+  role: "customer" | "owner" | "manager";
 };
 
 export interface AuthenticatedRequest extends Request {
   session?: Session;
+}
+
+export function requireOrganizer(
+  request: AuthenticatedRequest,
+  response: Response,
+  next: NextFunction,
+) {
+  requireAuth(request, response, () => {
+    if (!request.session?.organizerId || request.session.role === "customer") {
+      response.status(403).json({ error: "Organizer access required" });
+      return;
+    }
+    next();
+  });
 }
 
 export async function hashPassword(password: string) {
@@ -59,4 +73,3 @@ export function requireAuth(
     response.status(401).json({ error: "Invalid or expired session" });
   }
 }
-

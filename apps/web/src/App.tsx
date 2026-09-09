@@ -15,10 +15,10 @@ type SeatHold = { hold_token: string; expires_at: string; seat_id: string };
 type Session = {
   token: string;
   user: { name: string; email: string; role: string };
-  organizer: { id: string; name: string };
+  organizer: { id: string; name: string } | null;
 };
 
-type OrganizerProfile = {
+type AccountProfile = {
   id: string;
   name: string;
   email: string;
@@ -44,29 +44,12 @@ type CustomerBooking = {
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 const sessionStorageKey = "seatlock.organizer-session";
-const bookingStorageKey = "seatlock.booking-tokens";
-
-function readBookingTokens(): string[] {
-  try {
-    const value = JSON.parse(window.localStorage.getItem(bookingStorageKey) ?? "[]");
-    return Array.isArray(value) ? value.filter((token): token is string => typeof token === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function rememberBookingToken(token: string) {
-  const tokens = Array.from(new Set([token, ...readBookingTokens()]));
-  window.localStorage.setItem(bookingStorageKey, JSON.stringify(tokens));
-  return tokens;
-}
-
 function readStoredSession(): Session | null {
   try {
     const stored = window.sessionStorage.getItem(sessionStorageKey);
     if (!stored) return null;
     const session = JSON.parse(stored) as Partial<Session>;
-    if (!session.token || !session.user?.name || !session.organizer?.id) {
+    if (!session.token || !session.user?.name) {
       window.sessionStorage.removeItem(sessionStorageKey);
       return null;
     }
@@ -100,8 +83,9 @@ async function api<T>(path: string, options?: RequestInit, token?: string): Prom
 }
 
 export function App() {
-  const [view, setView] = useState<"booking" | "bookings" | "auth" | "dashboard">("booking");
-  const [authMode, setAuthMode] = useState<"login" | "register">("register");
+  const [view, setView] = useState<"booking" | "bookings" | "auth" | "dashboard">(() => readStoredSession() ? "booking" : "auth");
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [accountType, setAccountType] = useState<"customer" | "organizer">("customer");
   const [session, setSession] = useState<Session | null>(readStoredSession);
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [organizerEvents, setOrganizerEvents] = useState<EventSummary[]>([]);
@@ -112,7 +96,6 @@ export function App() {
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [message, setMessage] = useState("");
   const [creatingEvent, setCreatingEvent] = useState(false);
-  const [bookingTokens, setBookingTokens] = useState<string[]>(readBookingTokens);
   const [customerBookings, setCustomerBookings] = useState<CustomerBooking[]>([]);
   const eventCreationInFlight = useRef(false);
   const eventCreationKey = useRef<string | null>(null);
@@ -132,34 +115,27 @@ export function App() {
     setOrganizerEvents(await api<EventSummary[]>("/api/organizer/events", undefined, token));
   }
 
-  async function loadCustomerBookings(tokens = bookingTokens) {
-    const results = await Promise.allSettled(
-      tokens.map((token) => api<CustomerBooking>(`/api/bookings/${token}`)),
-    );
-    setCustomerBookings(
-      results
-        .filter((result): result is PromiseFulfilledResult<CustomerBooking> => result.status === "fulfilled")
-        .map((result) => result.value)
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
-    );
+  async function loadCustomerBookings(token = session?.token) {
+    if (!token) return;
+    setCustomerBookings(await api<CustomerBooking[]>("/api/bookings", undefined, token));
   }
 
   useEffect(() => {
     loadEvents().catch((error) => setMessage(error.message));
-    loadCustomerBookings().catch(() => undefined);
   }, []);
 
   useEffect(() => {
     if (!session) return;
-    api<OrganizerProfile>("/api/organizer/me", undefined, session.token)
+    api<AccountProfile>("/api/auth/me", undefined, session.token)
       .then((profile) => {
         const refreshedSession: Session = {
           token: session.token,
           user: { name: profile.name, email: profile.email, role: profile.role },
-          organizer: { id: profile.organizer_id, name: profile.organization_name },
+          organizer: profile.organizer_id ? { id: profile.organizer_id, name: profile.organization_name } : null,
         };
         setSession(refreshedSession);
         storeSession(refreshedSession);
+        loadCustomerBookings(refreshedSession.token).catch(() => undefined);
       })
       .catch(() => {
         setSession(null);
@@ -195,9 +171,13 @@ export function App() {
 
   async function reserve(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!session) {
+      setView("auth");
+      setMessage("Log in to reserve a seat.");
+      return;
+    }
     if (!selectedEvent || !selectedSeat) return;
     const formElement = event.currentTarget;
-    const form = new FormData(formElement);
     try {
       const hold = await api<SeatHold>("/api/holds", {
         method: "POST",
@@ -205,10 +185,8 @@ export function App() {
         body: JSON.stringify({
           eventId: selectedEvent.id,
           seatId: selectedSeat.id,
-          customerName: form.get("name"),
-          customerEmail: form.get("email"),
         }),
-      });
+      }, session?.token);
       setSeatHold(hold);
       setMessage(`Seat ${selectedSeat.label} is held for five minutes.`);
       await loadSeats(selectedEvent.id);
@@ -221,10 +199,8 @@ export function App() {
   async function confirmReservation() {
     if (!seatHold || !selectedEvent || !selectedSeat) return;
     try {
-      await api(`/api/holds/${seatHold.hold_token}/confirm`, { method: "POST" });
-      const tokens = rememberBookingToken(seatHold.hold_token);
-      setBookingTokens(tokens);
-      await loadCustomerBookings(tokens);
+      await api(`/api/holds/${seatHold.hold_token}/confirm`, { method: "POST" }, session?.token);
+      await loadCustomerBookings();
       setMessage(`Seat ${selectedSeat.label} is confirmed. Your booking is complete.`);
       setSeatHold(null);
       setSelectedSeat(null);
@@ -242,7 +218,8 @@ export function App() {
     const form = new FormData(event.currentTarget);
     const body = authMode === "register"
       ? {
-          organizationName: form.get("organizationName"),
+          accountType,
+          ...(accountType === "organizer" ? { organizationName: form.get("organizationName") } : {}),
           name: form.get("name"),
           email: form.get("email"),
           password: form.get("password"),
@@ -256,8 +233,11 @@ export function App() {
       setSession(authenticated);
       storeSession(authenticated);
       setMessage("");
-      setView("dashboard");
-      await loadOrganizerEvents(authenticated.token);
+      setView("booking");
+      await Promise.all([
+        loadCustomerBookings(authenticated.token),
+        authenticated.organizer ? loadOrganizerEvents(authenticated.token) : Promise.resolve(),
+      ]);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Authentication failed");
     }
@@ -295,7 +275,8 @@ export function App() {
     setSession(null);
     storeSession(null);
     setOrganizerEvents([]);
-    setView("booking");
+    setCustomerBookings([]);
+    setView("auth");
     setMessage("");
   }
 
@@ -306,16 +287,17 @@ export function App() {
   return (
     <main>
       <header>
-        <button className="brand brand-button" onClick={() => setView("booking")}>SeatLock<span>.</span></button>
+        <button className="brand brand-button" onClick={() => setView(session ? "booking" : "auth")}>SeatLock<span>.</span></button>
         <nav>
-          {session && <span className="signed-in">{session.organizer.name}</span>}
-          {view !== "bookings" && (
+          {session && <span className="signed-in">{session.user.name}</span>}
+          {session && view !== "booking" && (
+            <button className="nav-button" onClick={() => setView("booking")}>Events</button>
+          )}
+          {session && view !== "bookings" && (
             <button className="nav-button" onClick={() => setView("bookings")}>My bookings</button>
           )}
-          {view !== "dashboard" && (
-            <button className="nav-button" onClick={() => setView(session ? "dashboard" : "auth")}>
-              {session ? "Organizer dashboard" : "Organizer portal"}
-            </button>
+          {session?.organizer && view !== "dashboard" && (
+            <button className="nav-button" onClick={() => setView("dashboard")}>Organizer portal</button>
           )}
           {session && <button className="nav-button muted" onClick={logout}>Log out</button>}
         </nav>
@@ -364,8 +346,6 @@ export function App() {
               </div>
               <form className="booking-form" onSubmit={reserve}>
                 <div className="selection"><span>Selected seat</span><strong>{selectedSeat ? `${selectedSeat.label} · ${selectedSeat.pricing_tier} · ₹${(selectedSeat.price_paise / 100).toFixed(0)}` : "None"}</strong></div>
-                <input name="name" placeholder="Your name" minLength={2} required />
-                <input name="email" type="email" placeholder="Email address" required />
                 <button className="primary-button" disabled={!selectedSeat || Boolean(seatHold)}>Hold seat</button>
               </form>
               {seatHold && selectedSeat && (
@@ -387,9 +367,9 @@ export function App() {
       {view === "auth" && (
         <section className="auth-layout">
           <div className="auth-copy">
-            <p className="eyebrow">Organizer portal</p>
-            <h1>Run remarkable<br />events.</h1>
-            <p className="intro">Create events, generate seat inventory, and monitor reservations from one protected workspace.</p>
+            <p className="eyebrow">Welcome to SeatLock</p>
+            <h1>Book confidently.<br />Come back anytime.</h1>
+            <p className="intro">One account for booking seats, viewing tickets, and—if you organize events—managing them.</p>
           </div>
           <div className="auth-card">
             <div className="auth-tabs">
@@ -397,10 +377,17 @@ export function App() {
               <button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Log in</button>
             </div>
             <form className="stacked-form" onSubmit={authenticate}>
-              {authMode === "register" && <><label>Organization<input name="organizationName" placeholder="Aurora Events" minLength={2} required /></label><label>Your name<input name="name" placeholder="Your full name" minLength={2} required /></label></>}
+              {authMode === "register" && <>
+                <div className="account-type-tabs">
+                  <button type="button" className={accountType === "customer" ? "active" : ""} onClick={() => setAccountType("customer")}>Book tickets</button>
+                  <button type="button" className={accountType === "organizer" ? "active" : ""} onClick={() => setAccountType("organizer")}>Organize events</button>
+                </div>
+                {accountType === "organizer" && <label>Organization<input name="organizationName" placeholder="Aurora Events" minLength={2} required /></label>}
+                <label>Your name<input name="name" placeholder="Your full name" minLength={2} required /></label>
+              </>}
               <label>Email<input name="email" type="email" placeholder="you@example.com" required /></label>
               <label>Password<input name="password" type="password" placeholder="At least 10 characters" minLength={10} required /></label>
-              <button className="primary-button">{authMode === "register" ? "Create organizer account" : "Log in"}</button>
+              <button className="primary-button">{authMode === "register" ? "Create account" : "Log in"}</button>
             </form>
             {message && <p className="message" role="status">{message}</p>}
           </div>
@@ -415,7 +402,7 @@ export function App() {
           </div>
           <div className="event-list-panel">
             {customerBookings.length === 0 && (
-              <p className="empty-state">No confirmed bookings saved in this browser yet.</p>
+              <p className="empty-state">No confirmed bookings on this account yet.</p>
             )}
             {customerBookings.map((booking) => (
               <article className="customer-booking" key={booking.id}>
@@ -435,7 +422,7 @@ export function App() {
         </section>
       )}
 
-      {view === "dashboard" && session && (
+      {view === "dashboard" && session?.organizer && (
         <section className="dashboard">
           <div className="dashboard-heading">
             <div><p className="eyebrow">Organizer dashboard</p><h1>{session.organizer.name}</h1></div>
