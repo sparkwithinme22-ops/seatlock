@@ -378,12 +378,16 @@ export function App() {
             </div>
             <form className="stacked-form" onSubmit={authenticate}>
               {authMode === "register" && <>
-                <div className="account-type-tabs">
-                  <button type="button" className={accountType === "customer" ? "active" : ""} onClick={() => setAccountType("customer")}>Book tickets</button>
-                  <button type="button" className={accountType === "organizer" ? "active" : ""} onClick={() => setAccountType("organizer")}>Organize events</button>
-                </div>
-                {accountType === "organizer" && <label>Organization<input name="organizationName" placeholder="Aurora Events" minLength={2} required /></label>}
                 <label>Your name<input name="name" placeholder="Your full name" minLength={2} required /></label>
+                <label className="organizer-option">
+                  <input
+                    type="checkbox"
+                    checked={accountType === "organizer"}
+                    onChange={(event) => setAccountType(event.target.checked ? "organizer" : "customer")}
+                  />
+                  <span><strong>I also want to organize events</strong><small>Add an organizer portal to this account.</small></span>
+                </label>
+                {accountType === "organizer" && <label>Organization<input name="organizationName" placeholder="Aurora Events" minLength={2} required /></label>}
               </>}
               <label>Email<input name="email" type="email" placeholder="you@example.com" required /></label>
               <label>Password<input name="password" type="password" placeholder="At least 10 characters" minLength={10} required /></label>

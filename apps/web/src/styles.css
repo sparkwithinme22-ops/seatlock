@@ -59,9 +59,11 @@ input:focus { border-color: #80ed99; }
 .auth-tabs { display: grid; grid-template-columns: 1fr 1fr; background: #0f1612; border-radius: 10px; padding: 4px; margin-bottom: 26px; }
 .auth-tabs button { border: 0; padding: 11px; border-radius: 7px; color: #77847d; background: transparent; }
 .auth-tabs button.active { color: #e9efec; background: #26332d; }
-.account-type-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.account-type-tabs button { border: 1px solid #34423b; border-radius: 9px; padding: 11px; color: #7f8c85; background: transparent; }
-.account-type-tabs button.active { border-color: #80ed99; color: #80ed99; background: #17241d; }
+.stacked-form .organizer-option { display: flex; grid-template-columns: none; align-items: center; gap: 11px; padding: 13px; border: 1px solid #34423b; border-radius: 9px; background: #111814; cursor: pointer; }
+.stacked-form .organizer-option input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: #80ed99; }
+.organizer-option span { display: grid; gap: 3px; }
+.organizer-option strong { color: #dce5e0; font-size: 13px; }
+.organizer-option small { color: #7f8c85; font-size: 11px; }
 .stacked-form { display: grid; gap: 16px; }
 .stacked-form label { display: grid; gap: 7px; color: #8f9b95; font-size: 12px; }
 .stacked-form input { height: 48px; }
